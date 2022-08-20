@@ -100,7 +100,7 @@ elif 'funhouse' in board_type.lower():
             thrusting = True
         firing = thrusting  # only using 3 keys!
         return turning, thrusting, firing
-    
+
 # Pybadge 160x128 color display, D-pad L/R for L/R, A for Thrust/Fire
 elif 'pybadge' in board_type.lower():
     import keypad
@@ -244,13 +244,18 @@ elif 'clue' in board_type.lower():
         return turning, thrusting, firing
 
 # PyPortal 320x240 display + Joy Featherwing over I2C STEMMA port.
-# X-joystick for L/R, A = fire, B = thrust, SEL for rainbowing
+#  if Joy Featherwing is not connected try to use touchscreen feature
+#  if Joy Featherwing 
+#    X-joystick for L/R, A = fire, B = thrust, SEL for rainbowing
+#  if touchscreen
+#    <- -> to L/R , star for fire, ^ for thrust, right down corner for rainbowing, right up corner for sound 
 elif 'pyportal' in board_type.lower():
     from adafruit_seesaw.seesaw import Seesaw
     import neopixel
     import analogio
     import rainbowio
     import busio
+
     num_roids = 6
     num_shots = 3
     shot_life = 2
@@ -262,18 +267,43 @@ elif 'pyportal' in board_type.lower():
     display = board.DISPLAY
     display.rotation = 0
     i2c_bus = busio.I2C(board.SCL, board.SDA)
-    ss = Seesaw(i2c_bus)
+    try:
+        ss = Seesaw(i2c_bus)
+        pyportal_tsmode=False
+    except:
+        # Joy no found try to use touch screen
+        import adafruit_touchscreen
+        pyportal_tsmode=True
+        # Change background to put pseudo button
+        bg_fname = '/imgs/bg_starfield_320x240_ts.bmp' # hubble star field big for PyPortal + button
+        touchscreen = adafruit_touchscreen.Touchscreen(
+            board.TOUCH_XL,
+            board.TOUCH_XR,
+            board.TOUCH_YD,
+            board.TOUCH_YU,
+            calibration=((5200, 59000), (5800, 57000)),
+            size=(320, 240),
+        )
+        lenbt=20
+        btleftpos=32
+        btrightpos=93
+        btthrustingpos=162
+        btfirepos=226
+        btrainbowpos=300
+        btlistdown = [btleftpos,btrightpos,btthrustingpos,btfirepos,btrainbowpos]
+    #not touchscreen
+    if not pyportal_tsmode:
+        BUTTON_A = 6
+        BUTTON_B = 7
+        # BUTTON_Y = 9
+        # BUTTON_X = 10
+        BUTTON_SEL = 14
+        button_mask = ( (1 << BUTTON_A) | (1 << BUTTON_B) | (1 << BUTTON_SEL) )
 
-    BUTTON_A = 6
-    BUTTON_B = 7
-    # BUTTON_Y = 9
-    # BUTTON_X = 10
-    BUTTON_SEL = 14
-    button_mask = ( (1 << BUTTON_A) | (1 << BUTTON_B) | (1 << BUTTON_SEL) )
-
-    ss.pin_mode_bulk(button_mask, ss.INPUT_PULLUP)
+        ss.pin_mode_bulk(button_mask, ss.INPUT_PULLUP)
     leds = neopixel.NeoPixel(board.NEOPIXEL, 1, brightness=1)
     rainbowing = False # secret rainbowing mode
+    enable_sound=True
     if enable_sound:
         import audiocore, audioio, digitalio
         speaker_enable = digitalio.DigitalInOut(board.SPEAKER_ENABLE)
@@ -281,13 +311,55 @@ elif 'pyportal' in board_type.lower():
         wav_pew = audiocore.WaveFile(open(pew_wav_fname,"rb"))
         wav_exp = audiocore.WaveFile(open(exp_wav_fname,"rb"))
         audio = audioio.AudioOut(board.SPEAKER)
-    # Joy FeatherWing, button processing
+    # touch screen
+    def get_button_touchscreen():
+        turningleft=False
+        turningright=False
+        thrusting=False
+        firing=False
+        rainbowing=False
+        p = touchscreen.touch_point
+        if p is not None:
+            if p[1] > 220:
+                cpt=0
+                for bt in btlistdown:
+                    if p[0] > bt and p[0] < bt+lenbt:
+                        if cpt == 0:
+                            turningleft=True
+                        elif cpt == 1:
+                            turningright=True
+                        elif cpt == 2:
+                            thrusting=True
+                        elif cpt == 3:
+                            firing=True
+                        elif cpt == 4:
+                            rainbowing=True
+                    cpt=cpt+1
+
+        return turningleft,turningright,thrusting,firing,rainbowing
+    # Joy FeatherWing, button processing or ts button processing
     def get_user_input(turning,thrusting,firing):
         global rainbowing
-        buttons = ss.digital_read_bulk(button_mask)
-        thrusting = not (buttons & 1<<BUTTON_B)
-        firing = not (buttons & 1<<BUTTON_A)
-        rainbowing = not (buttons & 1<<BUTTON_SEL)
+        global enable_sound
+        # touch screen mode
+        if pyportal_tsmode:
+            turningleft,turningright,thrusting,firing,rainbowing = get_button_touchscreen()
+            turning=0
+            if turningleft:
+                turning = -0.12
+            if turningright:
+                turning = 0.12
+
+        else:
+        # joy feartherwing mode
+            buttons = ss.digital_read_bulk(button_mask)
+            thrusting = not (buttons & 1<<BUTTON_B)
+            firing = not (buttons & 1<<BUTTON_A)
+            rainbowing = not (buttons & 1<<BUTTON_SEL)
+            turning = 0
+            joystick_x = ss.analog_read(3)
+            if joystick_x  > 700: turning = 0.12
+            if joystick_x  < 500: turning = -0.12
         if rainbowing:  # rainbow mode!
             c = rainbowio.colorwheel( time.monotonic()*100 % 255 )
             bg_pal[1] = c # this slows things down a lot due to full screen redraw
@@ -296,10 +368,6 @@ elif 'pyportal' in board_type.lower():
             shot_sprites_pal[1] = c
             for (s,p) in roid_spr_pal: p[1] = c
             score_label.color = c
-        turning = 0
-        joystick_x = ss.analog_read(3)
-        if joystick_x  > 700: turning = 0.12
-        if joystick_x  < 500: turning = -0.12
         return turning, thrusting, firing
     def play_effect(fx_type,fx_color=0): # fx_type=0 pew, fx_type = 1 explosion
         if fx_type==1: leds.fill(fx_color)
@@ -321,7 +389,7 @@ class Thing:
         self.vx,self.vy = vx,vy # initial x,y velocity
         self.angle = angle # angle object is rotation
         self.va = va   # initial angular velocity
-        self.vmax = vmax  # max velocity. 3 on pybadge, 4 on FunHouse 
+        self.vmax = vmax  # max velocity. 3 on pybadge, 4 on FunHouse
         self.tg = tilegrid
         self.num_tiles = num_tiles
         self.time = 0
@@ -357,7 +425,7 @@ class Thing:
     # doesn't match internal Thing angle. So this computes a new angle based off the
     # coarse tile grid rotation. Seems to fix the weird "off-axis" shots I was seeing
     @property
-    def angle_quantized(self): 
+    def angle_quantized(self):
         return self.tg[0] * (2*math.pi / self.num_tiles)
 
 
@@ -375,7 +443,7 @@ shiptg = displayio.TileGrid(ship_sprites, pixel_shader=ship_sprites_pal,
                             width=1, height=1, tile_width=tile_w, tile_height=tile_w)
 # asteroid sprites
 roid_spr_pal = []
-for f in roid_fnames: 
+for f in roid_fnames:
     spr,pal = adafruit_imageload.load(f % tile_w)
     pal.make_transparent(0)
     roid_spr_pal.append( (spr,pal) )
@@ -407,7 +475,7 @@ for i in range(num_roids):
     roids.append(roid)
     screen.append(roid.tg)
 
-# create shot Things, add to screen, then hide them 
+# create shot Things, add to screen, then hide them
 shots = []
 for i in range(num_shots):
     shottg = displayio.TileGrid(shot_sprites, pixel_shader=shot_sprites_pal,
@@ -455,11 +523,11 @@ def roid_hit(roid,hit_ship=False):
 # --- main loop --------------------------------------------------------
 
 last_led_time = 0   # when was LED age last checked
-last_roid_time = 0  # when was asteroid age last checked  
+last_roid_time = 0  # when was asteroid age last checked
 shot_time = 0       # when did shooting start
 shot_index = -1     # which shot are we on
 turning = 0 # neg if currrently turning left, pos if turning right
-thrusting = False   # true if thrusting 
+thrusting = False   # true if thrusting
 firing = False      # true if firing
 
 while True:
@@ -469,10 +537,10 @@ while True:
 
     # update ship state
     ship.angle = ship.angle + turning
-    if thrusting: 
+    if thrusting:
         ship.accelerate( ship.angle, accel_max_ship)
     if firing:
-        if now - shot_time > 0.2:  # Fire ze missiles 
+        if now - shot_time > 0.2:  # Fire ze missiles
             shot_time = now
             print("fire", ship.angle, ship.tg[0], ship.angle_quantized)
             play_effect(0)
@@ -482,12 +550,12 @@ while True:
                 shot.x, shot.y = ship.x,ship.y # put shot at ship pos
                 shot.vx,shot.vy = 0,0  # we accelerate it later
                 shot.time = time.monotonic() # newborn!
-                shot.accelerate(ship.angle_quantized, accel_max_shot) 
+                shot.accelerate(ship.angle_quantized, accel_max_shot)
                 shot.hide(False) # show it off
 
     # update ship position
     ship.update_pos( thrusting )
-    
+
     # update asteroids state and positions
     for roid in roids:
         roid.update_pos()
@@ -501,9 +569,9 @@ while True:
     # update shot positions, age them out
     for shot in shots:
         shot.update_pos()
-        if time.monotonic() - shot.time > shot_life: 
+        if time.monotonic() - shot.time > shot_life:
             shot.hide()
-            
+
     # update position of our single explosion thing
     roidexp.update_pos()
 

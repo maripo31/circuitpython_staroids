@@ -6,7 +6,10 @@ Works with [FunHouse](https://www.adafruit.com/product/4985),
 [Pybadge](https://www.adafruit.com/product/4200),
 [EdgeBadge](https://www.adafruit.com/product/4400),
 [CLUE](https://www.adafruit.com/product/4500),
-and [Pygamer](https://www.adafruit.com/product/4242).
+[Pygamer](https://www.adafruit.com/product/4242),
+and [PyPortal](https://www.adafruit.com/product/4116)
+
+Note : on pyportal, there is version with joy featherwing and touchscreen.
 
 <img src="./docs/staroids_family1.jpg" />
 
